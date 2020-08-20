@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+  <title>QuicTransport client</title>
+  <meta charset="utf-8" />
+  <!-- QuicTransport origin trial token. See https://developers.chrome.com/origintrials/#/view_trial/-6744140441987317759 -->
+  <meta http-equiv="origin-trial" content="AqKO+aj1zDwxxUbP3bnpykNDcFiz/aAl0r0TSy7MZprzOPPJbQVC6lnCjgMFG02CJqQq5yHAa5fCyTaBD1jOdw4AAABQeyJvcmlnaW4iOiJodHRwOi8vbG9jYWxob3N0OjgwMDAiLCJmZWF0dXJlIjoiUXVpY1RyYW5zcG9ydCIsImV4cGlyeSI6MTU5OTM3NTg5OX0=" />
+  <!-- <meta http-equiv="origin-trial" content="Ag9q2EpNlR7lAjKqwd1BXvlC9stEQ+XBqKclgW52pxzfYFQo/bTYIo0+lDeABvETik34V+3mEMxqXjpdANmlWA8AAABdeyJvcmlnaW4iOiJodHRwczovL2dvb2dsZWNocm9tZS5naXRodWIuaW86NDQzIiwiZmVhdHVyZSI6IlF1aWNUcmFuc3BvcnQiLCJleHBpcnkiOjE1OTQ3NDUwNDJ9"> -->
+  <script src="index.js"></script>
+  <!-- <link rel="stylesheet" href="client.css" /> -->
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <body>
+    <div id="top">
+      <div id="tool">
+        <h1>QuicTransport client</h1>
+        <div>
+          <h2>Establish QuicTransport connection</h2>
+          <textarea id='QuicTransportID' type='text' name='QuicTransportID' value='?????' cols="50" readonly></textarea>
+          <textarea id='OtherQuicTransportID' type='text' name='OtherQuicTransportID' value=''  cols="50" rows="10" readonly></textarea>
+          <div class="input-line">
+            <label for="url">URL:</label>
+            <input type="text" name="url" id="url" value="quic-transport://localhost:4433/mouse_point_share" />
+            <input type="button" id="prepareConnection" value="prepareConnection" onclick="prepareConnection()" />
+          </div>
+          <div class="sendDatagram">
+            <!-- <input type="text" name="sendDatagram" id="sendDatagram" /> -->
+            <input type="text" name="sendDatagramForm" id="sendDatagramForm" value="" />
+            <input type="button" id="sendDatagramButton" value="(sendDatagram)" onclick="sendDatagram()" />
+          </div>
+
+          <div class="sendStream">
+            <!-- <input type="text" name="sendStream" id="sendStream" /> -->
+            <input type="button" id="sendStream" value="sendStream" onclick="sendStream()" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

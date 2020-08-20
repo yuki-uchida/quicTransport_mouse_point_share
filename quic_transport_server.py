@@ -76,23 +76,65 @@ This will output "13" (the length of "Hello, world!") into the console.
 # open -a "Google Chrome" --args --origin-to-force-quic-on=localhost:4433 --ignore-certificate-errors-spki-list="ks9+B0hyVs6hwrZh3alG5XBKVGbAIrSnRWPSsdYXXFw="
 
 
-import argparse
-import asyncio
-import io
-import os
-import struct
-import urllib.parse
-from collections import defaultdict
-from typing import Dict, Optional
-
-from aioquic.asyncio import QuicConnectionProtocol, serve
-from aioquic.quic.configuration import QuicConfiguration
-from aioquic.quic.connection import QuicConnection, END_STATES
-from aioquic.quic.events import StreamDataReceived, StreamReset, DatagramFrameReceived, QuicEvent
+import uuid
 from aioquic.tls import SessionTicket
+from aioquic.quic.events import (
+    StreamDataReceived,
+    StreamReset,
+    DatagramFrameReceived,
+    QuicEvent,
+)
+from aioquic.quic.connection import QuicConnection, END_STATES
+from aioquic.quic.configuration import QuicConfiguration
+from aioquic.asyncio import QuicConnectionProtocol, serve
+from typing import Dict, Optional
+from collections import defaultdict
+import urllib.parse
+import struct
+import os
+import io
+import asyncio
+import argparse
+import sys
 
-BIND_ADDRESS = '::1'
+
+# Additional
+
+BIND_ADDRESS = "::1"
 BIND_PORT = 4433
+
+connections_list = {}
+
+
+def addConnections(new_connection, new_protocol) -> None:
+    print(f"quic_transport_server addConnections{connections_list}")
+    new_quic_transport_id = str(uuid.uuid4())
+    print(f"============quic_transport_id: {new_quic_transport_id}")
+    # 入室情報を他の人に教えてあげる(streamで)
+    for quic_transport_id, connection_dict in connections_list.items():
+        print(quic_transport_id, connection_dict)
+        response_id = connection_dict["connection"].get_next_available_stream_id(
+            is_unidirectional=True
+        )
+        payload = str(f"joined={new_quic_transport_id}").encode("ascii")
+        connection_dict["connection"].send_stream_data(response_id, payload, True)
+        connection_dict["protocol"].transmit()
+
+    connections_list[new_quic_transport_id] = {
+        "connection": new_connection,
+        "protocol": new_protocol,
+    }
+    # 自分のQuicTransportIDを教えてあげる(streamで)
+    response_id = new_connection.get_next_available_stream_id(is_unidirectional=True)
+    payload = str(f"quic_transport_id={new_quic_transport_id}").encode("ascii")
+    new_connection.send_stream_data(response_id, payload, True)
+
+
+def removeConnections(connection, protocol) -> None:
+    connections_list.remove({"connection": connection, "protocol": protocol})
+    print(
+        f"quic_transport_server removeConnections removed :{connection},{protocol}, remain: {connections_list} "
+    )
 
 
 # QUIC uses two lowest bits of the stream ID to indicate whether the stream is:
@@ -106,6 +148,8 @@ BIND_PORT = 4433
 # 0x1: サーバー起動&双方向
 # 0x2: クライアント開始&単方向
 # 0x3: サーバー起動&単方向
+
+
 def is_client_bidi_stream(stream_id):
     return stream_id % 4 == 0
 
@@ -119,33 +163,32 @@ def is_client_bidi_stream(stream_id):
 #     count on a new unidirectional stream.
 #   - For every incoming datagram, it sends a datagram with the length of
 #     datagram that was just received.
-class CounterHandler:
 
-    def __init__(self, connection) -> None:
+
+class sendDataHandler:
+    def __init__(self, protocol, connection) -> None:
+        self.protocol = protocol
         self.connection = connection
-        self.counters = defaultdict(int)
+        self.counters = defaultdict(str)
+        addConnections(self.connection, self.protocol)
+
+    def removeFromConnections(self) -> None:
+        removeConnections(self.connection, self.proto)
 
     def quic_event_received(self, event: QuicEvent) -> None:
         if isinstance(event, DatagramFrameReceived):
-            payload = str(len(event.data)).encode('ascii')
-            self.connection.send_datagram_frame(payload)
-
-        if isinstance(event, StreamDataReceived):
-            self.counters[event.stream_id] += len(event.data)
-            if event.end_stream:
-                if is_client_bidi_stream(event.stream_id):
-                    response_id = event.stream_id
-                else:
-                    response_id = self.connection.get_next_available_stream_id(
-                        is_unidirectional=True)
-                payload = str(self.counters[event.stream_id]).encode('ascii')
-                self.connection.send_stream_data(response_id, payload, True)
-                del self.counters[event.stream_id]
-
+            # for transport_id in quic_transport_protocols.keys():
+            #     quic_transport_protocols[transport_id].handler.connection.send_datagram_frame(b'0101')
+            #     quic_transport_protocols[transport_id].transmit()
+            print(
+                f"sendDataHandler#quic_event_received   connection.send_datagram_frame()"
+            )
+            self.connection.send_datagram_frame(b"0101")
         # Streams in QUIC can be closed in two ways: normal (FIN) and abnormal
         # (resets).  FIN is handled by event.end_stream logic above; the code
         # below handles the resets.
         if isinstance(event, StreamReset):
+            print(f"sendDataHandler#quic_event_received StreamReset")
             try:
                 del self.counters[event.stream_id]
             except KeyError:
@@ -157,33 +200,59 @@ class CounterHandler:
 # handler (in this example, CounterHandler).  It does that by waiting for a
 # client indication (a special stream with protocol headers), and buffering all
 # unrelated events until the client indication can be fully processed.
-class QuicTransportProtocol(QuicConnectionProtocol):
 
+
+class QuicTransportProtocol(QuicConnectionProtocol):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.pending_events = []
         self.handler = None
-        self.client_indication_data = b''
+        self.client_indication_data = b""
+
+    # QuicConnectionProtocolクラスのtをオーバーライドしてる
+    # quicを経由したデータ送信は全てここを通る？少なくともclient indicationはここを経由する
 
     def quic_event_received(self, event: QuicEvent) -> None:
         try:
+            print(
+                "quic_server_transport_server#QuicTransportProtocol#quic_event_received ============================================================================================================================================"
+            )
+            print(
+                f"quic_server_transport_server#QuicTransportProtocol#quic_event_received event: {event} pending_events: {self.pending_events}"
+            )
+            print(
+                f"quic_server_transport_server#QuicTransportProtocol#quic_event_received#self._quic._host_cids : {self._quic._host_cids}"
+            )
             if self.is_closing_or_closed():
+                self.handler.removeFromConnections()
                 return
-
             # If the handler is available, that means the connection has been
             # established and the client  has been processed.
             if self.handler is not None:
+                print(
+                    "quic_server_transport_server#QuicTransportProtocol#quic_event_received handler is already available!!"
+                )
                 self.handler.quic_event_received(event)
                 return
-
+            # stream_id=2 => クライアントサイド開始&単方向
             if isinstance(event, StreamDataReceived) and event.stream_id == 2:
+                # print(f'event.data : {event.data}')
+                # print(f'event.end_stream : {event.end_stream}')
                 self.client_indication_data += event.data
+                # streamが終了している場合には開始する処理が走る。すでに開始している場合には何もせず？
                 if event.end_stream:
+                    # client_indicationを処理して、アクセスしてきたpathによって処理を変える。
+                    # self.handlerにCounter handlerのようなものが入っていないといけない？
+                    print(
+                        f"quic_server_transport_server#QuicTransportProtocol#quic_event_received#process_client_indication"
+                    )
                     self.process_client_indication()
+                    # print(self.is_closing_or_closed())
                     if self.is_closing_or_closed():
                         return
                     # Pass all buffered events into the handler now that it's
                     # available.
+                    # print(self.pending_events)
                     for e in self.pending_events:
                         self.handler.quic_event_received(e)
                     self.pending_events.clear()
@@ -195,66 +264,77 @@ class QuicTransportProtocol(QuicConnectionProtocol):
                 self.pending_events.append(event)
 
         except Exception as e:
+            print(e)
             self.handler = None
             self.close()
+        # print('quic_event_received() ended')
 
     # Client indication follows a "key-length-value" format, where key and
     # length are 16-bit integers.  See
     # https://tools.ietf.org/html/draft-vvv-webtransport-quic-01#section-3.2
+
     def parse_client_indication(self, bs):
+        print(
+            "quic_server_transport_server#QuicTransportProtocol#quic_event_received#parse_client_indication starting!!!"
+        )
         while True:
             prefix = bs.read(4)
             if len(prefix) == 0:
                 return  # End-of-stream reached.
             if len(prefix) != 4:
-                raise Exception('Truncated key-length tag')
+                raise Exception("Truncated key-length tag")
             # Cの構造体のデータとpython bytesオブジェクトの変換でstructは使用される
-            key, length = struct.unpack('!HH', prefix)
+            key, length = struct.unpack("!HH", prefix)
             value = bs.read(length)
             if len(value) != length:
-                raise Exception('Truncated value')
+                raise Exception("Truncated value")
             yield (key, value)
 
     def process_client_indication(self) -> None:
+        """
+        ProtocolNegotiated/HandshakeCompletedのeventが送られてきた後に送られるClient_indicationを処理する。
+        stream_idが2(クライアント開始・単方向)で、handlerがまだ渡されていない(開始していないstreamである)場合にこの関数が呼ばれる。
+        (その時はend_stream=Trueで、self.is_closing_or_closed()がFalseになっているはず)
+        new QuicTransport(url);の段階で、clientの情報が送られてくる。その情報はまず`quic_event_received()` で処理される
+        """
         KEY_ORIGIN = 0
         KEY_PATH = 1
         indication = dict(
-            self.parse_client_indication(io.BytesIO(
-                self.client_indication_data)))
+            self.parse_client_indication(io.BytesIO(self.client_indication_data))
+        )
 
         origin = urllib.parse.urlparse(indication[KEY_ORIGIN].decode())
         path = urllib.parse.urlparse(indication[KEY_PATH]).decode()
-
         # Verify that the origin host is allowed to talk to this server.  This
         # is similar to the CORS (Cross-Origin Resource Sharing) mechanism in
         # HTTP.  See <https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS>.
-        if origin.hostname != 'localhost':
-            raise Exception('Wrong origin specified')
-
+        if origin.hostname != "localhost":
+            raise Exception("Wrong origin specified")
         # Dispatch the incoming connection based on the path specified in the
         # URL.
-        if path.path == '/counter':
-            self.handler = CounterHandler(self._quic)
+        if path.path == "/mouse_point_share":
+            self.handler = sendDataHandler(self, self._quic)
+            print("handler attached!!!!!!!")
         else:
-            raise Exception('Unknown path')
+            raise Exception("Unknown path")
 
     def is_closing_or_closed(self) -> bool:
         return self._quic._close_pending or self._quic._state in END_STATES
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('certificate')
-    parser.add_argument('key')
+    parser.add_argument("certificate")
+    parser.add_argument("key")
     args = parser.parse_args()
     # Quicのsetting
     configuration = QuicConfiguration(
         # Identifies the protocol used.  The origin trial uses the protocol
         # described in draft-vvv-webtransport-quic-01, hence the ALPN value.
         # See https://tools.ietf.org/html/draft-vvv-webtransport-quic-01#section-3.1
-        alpn_protocols=['wq-vvv-01'],
+        alpn_protocols=["wq-vvv-01"],
         is_client=False,
-
+        idle_timeout=300,
         # Note that this is just an upper limit; the real maximum datagram size
         # available depends on the MTU of the path.  See
         # <https://en.wikipedia.org/wiki/Maximum_transmission_unit>.
@@ -265,11 +345,13 @@ if __name__ == '__main__':
 
     loop = asyncio.get_event_loop()
     # 完了するまで続ける
+    print("running quic server")
     loop.run_until_complete(
         serve(
             BIND_ADDRESS,
             BIND_PORT,
             configuration=configuration,
             create_protocol=QuicTransportProtocol,
-        ))
+        )
+    )
     loop.run_forever()
