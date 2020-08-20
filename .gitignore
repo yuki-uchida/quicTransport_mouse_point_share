@@ -1,3 +1,5 @@
 .venv
 certificate.key
 certificate.pem
+*.secret
+.DS_Store
