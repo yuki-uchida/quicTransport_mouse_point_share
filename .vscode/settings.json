@@ -4,6 +4,5 @@
   "python.linting.pycodestyleEnabled": true,
   "python.linting.pylintEnabled": true,
   "python.formatting.provider": "black",
-  "notebook.kernelProviderAssociations": [],
-  "python.formatting.blackArgs": ["--ignore=E111, E114, E402, E501"]
+  "notebook.kernelProviderAssociations": []
 }
