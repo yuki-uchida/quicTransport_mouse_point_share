@@ -109,10 +109,8 @@ connections_list = {}
 def addConnections(new_connection, new_protocol) -> None:
     print(f"quic_transport_server addConnections{connections_list}")
     new_quic_transport_id = str(uuid.uuid4())
-    print(f"============quic_transport_id: {new_quic_transport_id}")
     # 入室情報を他の人に教えてあげる(streamで)
     for quic_transport_id, connection_dict in connections_list.items():
-        print(quic_transport_id, connection_dict)
         response_id = connection_dict["connection"].get_next_available_stream_id(
             is_unidirectional=True
         )
@@ -128,6 +126,19 @@ def addConnections(new_connection, new_protocol) -> None:
     response_id = new_connection.get_next_available_stream_id(is_unidirectional=True)
     payload = str(f"quic_transport_id={new_quic_transport_id}").encode("ascii")
     new_connection.send_stream_data(response_id, payload, True)
+    new_protocol.transmit()
+    for quic_transport_id, connection_dict in connections_list.items():
+        # if new_connection == connection_dict["connection"]:
+        #     continue
+        if new_quic_transport_id == quic_transport_id:
+            continue
+        response_id = new_connection.get_next_available_stream_id(
+            is_unidirectional=True
+        )
+        payload = str(f"joined={quic_transport_id}").encode("ascii")
+        new_connection.send_stream_data(response_id, payload, True)
+        new_protocol.transmit()
+    return new_quic_transport_id
 
 
 def removeConnections(connection, protocol) -> None:
@@ -135,6 +146,7 @@ def removeConnections(connection, protocol) -> None:
     print(
         f"quic_transport_server removeConnections removed :{connection},{protocol}, remain: {connections_list} "
     )
+    # TODO:// 抜けたことを知らせる処理をかく
 
 
 # QUIC uses two lowest bits of the stream ID to indicate whether the stream is:
@@ -170,29 +182,20 @@ class sendDataHandler:
         self.protocol = protocol
         self.connection = connection
         self.counters = defaultdict(str)
-        addConnections(self.connection, self.protocol)
+        self.quic_transport_id = addConnections(self.connection, self.protocol)
 
     def removeFromConnections(self) -> None:
         removeConnections(self.connection, self.proto)
 
     def quic_event_received(self, event: QuicEvent) -> None:
         if isinstance(event, DatagramFrameReceived):
-            # for transport_id in quic_transport_protocols.keys():
-            #     quic_transport_protocols[transport_id].handler.connection.send_datagram_frame(b'0101')
-            #     quic_transport_protocols[transport_id].transmit()
-            print(
-                f"sendDataHandler#quic_event_received   connection.send_datagram_frame()"
-            )
-            self.connection.send_datagram_frame(b"0101")
-        # Streams in QUIC can be closed in two ways: normal (FIN) and abnormal
-        # (resets).  FIN is handled by event.end_stream logic above; the code
-        # below handles the resets.
-        if isinstance(event, StreamReset):
-            print(f"sendDataHandler#quic_event_received StreamReset")
-            try:
-                del self.counters[event.stream_id]
-            except KeyError:
-                pass
+            payload = event.data
+            # self.connection.send_datagram_frame(payload)
+            for quic_transport_id, connection_dict in connections_list.items():
+                if self.quic_transport_id == quic_transport_id:
+                    continue
+                connection_dict["connection"].send_datagram_frame(payload)
+                connection_dict["protocol"].transmit()
 
 
 # QuicTransportProtocol handles the beginning of a QuicTransport connection: it
@@ -217,12 +220,6 @@ class QuicTransportProtocol(QuicConnectionProtocol):
             print(
                 "quic_server_transport_server#QuicTransportProtocol#quic_event_received ============================================================================================================================================"
             )
-            print(
-                f"quic_server_transport_server#QuicTransportProtocol#quic_event_received event: {event} pending_events: {self.pending_events}"
-            )
-            print(
-                f"quic_server_transport_server#QuicTransportProtocol#quic_event_received#self._quic._host_cids : {self._quic._host_cids}"
-            )
             if self.is_closing_or_closed():
                 self.handler.removeFromConnections()
                 return
@@ -243,9 +240,6 @@ class QuicTransportProtocol(QuicConnectionProtocol):
                 if event.end_stream:
                     # client_indicationを処理して、アクセスしてきたpathによって処理を変える。
                     # self.handlerにCounter handlerのようなものが入っていないといけない？
-                    print(
-                        f"quic_server_transport_server#QuicTransportProtocol#quic_event_received#process_client_indication"
-                    )
                     self.process_client_indication()
                     # print(self.is_closing_or_closed())
                     if self.is_closing_or_closed():
@@ -274,9 +268,6 @@ class QuicTransportProtocol(QuicConnectionProtocol):
     # https://tools.ietf.org/html/draft-vvv-webtransport-quic-01#section-3.2
 
     def parse_client_indication(self, bs):
-        print(
-            "quic_server_transport_server#QuicTransportProtocol#quic_event_received#parse_client_indication starting!!!"
-        )
         while True:
             prefix = bs.read(4)
             if len(prefix) == 0:

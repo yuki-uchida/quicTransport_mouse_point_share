@@ -20,13 +20,41 @@ async function prepareConnection() {
   globalThis.streamNumber = 1;
   // console.log(transport);
 }
+prev_mouse_point_x = null;
+prev_mouse_point_y = null;
 async function startReceivingDatagram(transport) {
   const rs = transport.receiveDatagrams();
   const reader = rs.getReader();
   while (true) {
     const { value, done } = await reader.read();
-    console.log(value);
-    // console.log(value, Array.from(value), new TextDecoder("ascii").decode(value), done);
+    // console.log(value);
+    let result = new TextDecoder("ascii").decode(value);
+    console.log(result);
+    if (result.startsWith("mouse_point=")) {
+      const index = result.indexOf("=");
+      const mouse_point = result.slice(index + 1);
+      const mouse_point_x = mouse_point.split(",")[0];
+      const mouse_point_y = mouse_point.split(",")[1];
+      const myPics = document.getElementById("myPics");
+      const context = myPics.getContext("2d");
+      if (prev_mouse_point_x && prev_mouse_point_y) {
+        console.log(
+          prev_mouse_point_x,
+          mouse_point_x,
+          prev_mouse_point_y,
+          mouse_point_y
+        );
+        drawLine(
+          context,
+          prev_mouse_point_x,
+          prev_mouse_point_y,
+          mouse_point_x,
+          mouse_point_y
+        );
+      }
+      prev_mouse_point_x = mouse_point_x;
+      prev_mouse_point_y = mouse_point_y;
+    }
     if (done) {
       break;
     }
@@ -70,19 +98,59 @@ async function readDataFromStream(stream, number) {
   }
 }
 
-async function sendDatagram() {
+async function sendMousePointDatagram() {
   let QuicTransportID = document.getElementById("QuicTransportID").value;
   QuicTransportID = new TextEncoder().encode(QuicTransportID);
   const transport = globalThis.currentTransport;
-  if (globalThis.writer) {
-    writer.write(QuicTransportID);
-  } else {
-    const ws = transport.sendDatagrams();
-    const writer = ws.getWriter();
-    globalThis.writer = writer;
-    writer.write(QuicTransportID);
-    // console.log(QuicTransportID);
-  }
+  mouse_point_share();
+}
+let isDrawing = false;
+function drawLine(context, x1, y1, x2, y2) {
+  context.beginPath();
+  context.strokeStyle = "black";
+  context.lineWidth = 1;
+  context.moveTo(x1, y1);
+  context.lineTo(x2, y2);
+  context.stroke();
+  context.closePath();
+}
+function mouse_point_share() {
+  const myPics = document.getElementById("myPics");
+  const context = myPics.getContext("2d");
+  myPics.addEventListener("mousedown", (e) => {
+    x = e.offsetX;
+    y = e.offsetY;
+    isDrawing = true;
+  });
+
+  myPics.addEventListener("mousemove", (e) => {
+    if (isDrawing === true) {
+      drawLine(context, x, y, e.offsetX, e.offsetY);
+      x = e.offsetX;
+      y = e.offsetY;
+      const text = `mouse_point=${event.offsetX},${event.offsetY}`;
+      const encoded_text = new TextEncoder().encode(text);
+      console.log(text);
+
+      if (globalThis.writer) {
+        writer.write(encoded_text);
+      } else {
+        const ws = globalThis.currentTransport.sendDatagrams();
+        const writer = ws.getWriter();
+        globalThis.writer = writer;
+        writer.write(encoded_text);
+      }
+    }
+  });
+
+  window.addEventListener("mouseup", (e) => {
+    if (isDrawing === true) {
+      drawLine(context, x, y, e.offsetX, e.offsetY);
+      x = 0;
+      y = 0;
+      isDrawing = false;
+    }
+  });
 }
 
 async function sendStream() {
