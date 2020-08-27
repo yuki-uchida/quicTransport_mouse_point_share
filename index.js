@@ -27,7 +27,6 @@ async function startReceivingDatagram(transport) {
   const reader = rs.getReader();
   while (true) {
     const { value, done } = await reader.read();
-    // console.log(value);
     let result = new TextDecoder("ascii").decode(value);
     console.log(result);
     if (result.startsWith("mouse_point=")) {
@@ -80,7 +79,6 @@ async function readDataFromStream(stream, number) {
   let reader = stream.readable.pipeThrough(decoder).getReader();
   while (true) {
     let result = await reader.read();
-    console.log(result);
     if (result.done) {
       console.log("Stream #" + number + " closed");
       return;
