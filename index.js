@@ -112,6 +112,8 @@ function drawLine(context, x1, y1, x2, y2) {
   context.stroke();
   context.closePath();
 }
+
+var timeoutId;
 function mouse_point_share() {
   const myPics = document.getElementById("myPics");
   const context = myPics.getContext("2d");
@@ -122,23 +124,30 @@ function mouse_point_share() {
   });
 
   myPics.addEventListener("mousemove", (e) => {
-    if (isDrawing === true) {
-      drawLine(context, x, y, e.offsetX, e.offsetY);
-      x = e.offsetX;
-      y = e.offsetY;
-      const text = `mouse_point=${event.offsetX},${event.offsetY}`;
-      const encoded_text = new TextEncoder().encode(text);
-      console.log(text);
+    if (timeoutId) return;
+    // Prevent from very high frequency sending.
+    timeoutId = setTimeout(function () {
+      timeoutId = 0;
 
-      if (globalThis.writer) {
-        writer.write(encoded_text);
-      } else {
-        const ws = globalThis.currentTransport.sendDatagrams();
-        const writer = ws.getWriter();
-        globalThis.writer = writer;
-        writer.write(encoded_text);
+      if (isDrawing === true) {
+        console.log(x, y, e.offsetX, e.offsetY);
+        drawLine(context, x, y, e.offsetX, e.offsetY);
+        x = e.offsetX;
+        y = e.offsetY;
+        const text = `mouse_point=${e.offsetX},${e.offsetY}`;
+        const encoded_text = new TextEncoder().encode(text);
+        console.log(text);
+
+        if (globalThis.writer) {
+          writer.write(encoded_text);
+        } else {
+          const ws = globalThis.currentTransport.sendDatagrams();
+          const writer = ws.getWriter();
+          globalThis.writer = writer;
+          writer.write(encoded_text);
+        }
       }
-    }
+    }, 100);
   });
 
   window.addEventListener("mouseup", (e) => {
