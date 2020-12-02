@@ -116,7 +116,7 @@ def addConnections(new_connection, new_protocol) -> None:
         )
         payload = str(f"joined={new_quic_transport_id}").encode("ascii")
         connection_dict["connection"].send_stream_data(response_id, payload, True)
-        connection_dict["protocol"].transmit()
+        # connection_dict["protocol"].transmit()
 
     connections_list[new_quic_transport_id] = {
         "connection": new_connection,
@@ -325,7 +325,7 @@ if __name__ == "__main__":
         # See https://tools.ietf.org/html/draft-vvv-webtransport-quic-01#section-3.1
         alpn_protocols=["wq-vvv-01"],
         is_client=False,
-        idle_timeout=300,
+        idle_timeout=30000,
         # Note that this is just an upper limit; the real maximum datagram size
         # available depends on the MTU of the path.  See
         # <https://en.wikipedia.org/wiki/Maximum_transmission_unit>.

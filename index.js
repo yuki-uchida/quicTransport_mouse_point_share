@@ -1,9 +1,8 @@
 // "Connect" button handler.
 async function prepareConnection() {
   let url = document.getElementById("url").value;
-  var transport = new QuicTransport(url);
-  // console.log(transport);
-  console.log(`initializing QuicTransport Instance`);
+  var transport = new WebTransport(url);
+  console.log(`initializing WebTransport Instance`);
   transport.closed
     .then(() => {
       console.log(`The QUIC connection to ${url} closed gracefully`);
@@ -18,31 +17,22 @@ async function prepareConnection() {
   startReceivingStream(transport);
   globalThis.currentTransport = transport;
   globalThis.streamNumber = 1;
-  // console.log(transport);
 }
-prev_mouse_point_x = null;
-prev_mouse_point_y = null;
+let prev_mouse_point_x = null;
+let prev_mouse_point_y = null;
+
 async function startReceivingDatagram(transport) {
-  const rs = transport.receiveDatagrams();
-  const reader = rs.getReader();
+  const reader = transport.datagramReadable.getReader();
   while (true) {
     const { value, done } = await reader.read();
     let result = new TextDecoder("ascii").decode(value);
-    console.log(result);
+    // result = "mouse_point=x,y"
     if (result.startsWith("mouse_point=")) {
       const index = result.indexOf("=");
-      const mouse_point = result.slice(index + 1);
-      const mouse_point_x = mouse_point.split(",")[0];
-      const mouse_point_y = mouse_point.split(",")[1];
+      const [mouse_point_x, mouse_point_y] = result.slice(index + 1).split(",");
       const myPics = document.getElementById("myPics");
       const context = myPics.getContext("2d");
       if (prev_mouse_point_x && prev_mouse_point_y) {
-        console.log(
-          prev_mouse_point_x,
-          mouse_point_x,
-          prev_mouse_point_y,
-          mouse_point_y
-        );
         drawLine(
           context,
           prev_mouse_point_x,
@@ -61,7 +51,7 @@ async function startReceivingDatagram(transport) {
 }
 
 async function startReceivingStream(transport) {
-  let reader = transport.receiveStreams().getReader();
+  let reader = transport.incomingUnidirectionalStreams.getReader();
   while (true) {
     let result = await reader.read();
     if (result.done) {
@@ -130,24 +120,22 @@ function mouse_point_share() {
       timeoutId = 0;
 
       if (isDrawing === true) {
-        console.log(x, y, e.offsetX, e.offsetY);
         drawLine(context, x, y, e.offsetX, e.offsetY);
         x = e.offsetX;
         y = e.offsetY;
         const text = `mouse_point=${e.offsetX},${e.offsetY}`;
         const encoded_text = new TextEncoder().encode(text);
-        console.log(text);
 
         if (globalThis.writer) {
           writer.write(encoded_text);
         } else {
-          const ws = globalThis.currentTransport.sendDatagrams();
+          const ws = globalThis.currentTransport.datagramWritable;
           const writer = ws.getWriter();
           globalThis.writer = writer;
           writer.write(encoded_text);
         }
       }
-    }, 100);
+    }, 10);
   });
 
   window.addEventListener("mouseup", (e) => {
@@ -158,18 +146,4 @@ function mouse_point_share() {
       isDrawing = false;
     }
   });
-}
-
-async function sendStream() {
-  const transport = globalThis.currentTransport;
-  const stream = await transport.createSendStream();
-  const writer = stream.writable.getWriter();
-  const data1 = new Uint8Array([65, 66, 67]);
-  writer.write(data1);
-  try {
-    await writer.close();
-    console.log("All data has been sent.");
-  } catch (error) {
-    console.error(`An error occurred: ${error}`);
-  }
 }
